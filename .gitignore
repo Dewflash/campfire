@@ -3,6 +3,7 @@
 sounds/*
 !sounds/.gitkeep
 dist/
+release/
 
 # Logs
 logs

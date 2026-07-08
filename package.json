@@ -10,6 +10,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
+    "smoke": "CAMPFIRE_SMOKE_TEST=1 electron-forge start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint --ext .ts,.tsx ."
   },

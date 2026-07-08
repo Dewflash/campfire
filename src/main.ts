@@ -83,9 +83,73 @@ let sleepTimer: TimerState | null = null;
 let sleepTimerHandle: ReturnType<typeof setTimeout> | null = null;
 let presetsWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let stateWriteTimer: ReturnType<typeof setTimeout> | null = null;
+let cachedMediaRoot: string | null = null;
+let cachedBundledAssetsRoot: string | null = null;
 
-function assetsRoot() {
-  return app.isPackaged ? path.dirname(app.getPath('exe')) : app.getAppPath();
+function pathExists(filePath: string) {
+  try {
+    return fs.existsSync(filePath);
+  } catch {
+    return false;
+  }
+}
+
+function directoryForCandidate(candidate: string) {
+  const resolved = path.resolve(candidate);
+  if (!pathExists(resolved)) {
+    return resolved;
+  }
+  const stats = fs.statSync(resolved);
+  return stats.isDirectory() ? resolved : path.dirname(resolved);
+}
+
+function ancestors(start: string) {
+  const dirs: string[] = [path.resolve(start)];
+  let current = directoryForCandidate(start);
+  while (!dirs.includes(current)) {
+    dirs.push(current);
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  return dirs;
+}
+
+function rootCandidates() {
+  const starts = [
+    process.env.CAMPFIRE_MEDIA_ROOT,
+    process.env.CAMPFIRE_ASSETS_ROOT,
+    process.resourcesPath,
+    app.getAppPath(),
+    path.dirname(app.getPath('exe')),
+    process.cwd(),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  const dirs = starts.flatMap((candidate) => ancestors(candidate));
+  return [...new Set(dirs)];
+}
+
+function findRootContaining(requiredPaths: string[], fallback: string) {
+  return (
+    rootCandidates().find((candidate) =>
+      requiredPaths.every((requiredPath) => pathExists(path.join(candidate, requiredPath))),
+    ) ?? fallback
+  );
+}
+
+function mediaRoot() {
+  cachedMediaRoot ??= findRootContaining(['4k loops'], app.getAppPath());
+  return cachedMediaRoot;
+}
+
+function bundledAssetsRoot() {
+  cachedBundledAssetsRoot ??= findRootContaining(
+    [path.join('assets', 'tray', 'icon-Template.png')],
+    app.getAppPath(),
+  );
+  return cachedBundledAssetsRoot;
 }
 
 function presetsPath() {
@@ -153,6 +217,34 @@ function mediaUrl(...segments: string[]) {
   return `campfire://media/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`;
 }
 
+function cacheUrl(fileName: string) {
+  return `campfire://cache/${encodeURIComponent(fileName)}`;
+}
+
+function thumbnailCacheRoot() {
+  return path.join(app.getPath('userData'), 'thumbnail-cache');
+}
+
+function cachedThumbnailUrl(sceneBaseName: string, thumbnailPath: string) {
+  try {
+    const stats = fs.statSync(thumbnailPath);
+    const cacheName = `${slugify(sceneBaseName)}-${Math.round(stats.mtimeMs)}-${stats.size}.png`;
+    const cachePath = path.join(thumbnailCacheRoot(), cacheName);
+    if (!fs.existsSync(cachePath)) {
+      fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+      const image = nativeImage.createFromPath(thumbnailPath);
+      if (!image.isEmpty()) {
+        const resized = image.resize({ width: 420, quality: 'good' });
+        fs.writeFileSync(cachePath, resized.toPNG());
+      }
+    }
+    return fs.existsSync(cachePath) ? cacheUrl(cacheName) : mediaUrl('4k loops', path.basename(thumbnailPath));
+  } catch (error) {
+    console.warn(`Unable to cache thumbnail ${thumbnailPath}`, error);
+    return mediaUrl('4k loops', path.basename(thumbnailPath));
+  }
+}
+
 function iconForSound(fileName: string): SoundIconName {
   const lower = fileName.toLowerCase();
   const mappings: Array<[string[], SoundIconName]> = [
@@ -176,7 +268,7 @@ function iconForSound(fileName: string): SoundIconName {
 }
 
 function scanManifest(): MediaManifest {
-  const root = assetsRoot();
+  const root = mediaRoot();
   const videoDir = path.join(root, '4k loops');
   const soundDir = path.join(root, 'sounds');
   const scenes: SceneManifest[] = fs.existsSync(videoDir)
@@ -193,7 +285,7 @@ function scanManifest(): MediaManifest {
             name: displayNameFromFileBase(baseName),
             fileName,
             videoUrl: mediaUrl('4k loops', fileName),
-            thumbnailUrl: hasThumbnail ? mediaUrl('4k loops', thumbnailName) : null,
+            thumbnailUrl: hasThumbnail ? cachedThumbnailUrl(baseName, path.join(videoDir, thumbnailName)) : null,
           };
         })
     : [];
@@ -374,8 +466,15 @@ function setSleepTimer(minutes: TimerMinutes | null) {
 }
 
 function loadTrayImage(active: boolean) {
-  const iconPath = path.join(assetsRoot(), 'assets', 'tray', active ? 'icon-active-Template.png' : 'icon-Template.png');
-  const image = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+  const iconPath = path.join(
+    bundledAssetsRoot(),
+    'assets',
+    'tray',
+    active ? 'icon-active-Template.png' : 'icon-Template.png',
+  );
+  const image = fs.existsSync(iconPath)
+    ? nativeImage.createFromBuffer(fs.readFileSync(iconPath))
+    : nativeImage.createEmpty();
   image.setTemplateImage(true);
   return image;
 }
@@ -917,14 +1016,72 @@ function registerIpcHandlers() {
 function registerMediaProtocol() {
   protocol.handle('campfire', (request) => {
     const url = new URL(request.url);
+    const root = path.resolve(url.host === 'cache' ? thumbnailCacheRoot() : mediaRoot());
     const rel = decodeURIComponent(url.pathname).replace(/^\//, '');
-    const root = path.resolve(assetsRoot());
     const abs = path.resolve(path.join(root, rel));
     if (abs !== root && !abs.startsWith(`${root}${path.sep}`)) {
       return new Response('forbidden', { status: 403 });
     }
     return net.fetch(pathToFileURL(abs).toString());
   });
+}
+
+async function runSmokeTest() {
+  const image = loadTrayImage(false);
+  const window = createPopoverWindow();
+  await new Promise<void>((resolve) => {
+    if (window.webContents.isLoading()) {
+      window.webContents.once('did-finish-load', () => resolve());
+    } else {
+      resolve();
+    }
+  });
+  window.show();
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  await window.webContents
+    .executeJavaScript(`
+      Promise.race([
+        Promise.all(Array.from(document.images).map((img) => {
+          if (img.complete && img.naturalWidth > 0) return true;
+          return new Promise((resolve) => {
+            img.addEventListener('load', resolve, { once: true });
+            img.addEventListener('error', resolve, { once: true });
+          });
+        })),
+        new Promise((resolve) => setTimeout(resolve, 5000))
+      ])
+    `)
+    .catch(console.warn);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  if (process.env.CAMPFIRE_SCREENSHOT_PATH) {
+    const image = await window.webContents.capturePage();
+    fs.writeFileSync(process.env.CAMPFIRE_SCREENSHOT_PATH, image.toPNG());
+  }
+  const bodyText = (await window.webContents.executeJavaScript('document.body.innerText')) as string;
+  const result = {
+    bundledAssetsRoot: bundledAssetsRoot(),
+    mediaRoot: mediaRoot(),
+    trayIconLoaded: !image.isEmpty(),
+    scenes: manifest.scenes.length,
+    sounds: manifest.sounds.length,
+    presets: presets.length,
+    currentSceneId,
+    popoverHasCampfire: bodyText.includes('Campfire'),
+    popoverHasStartSession: bodyText.includes('Start session'),
+    popoverHasAudioOnly: bodyText.includes('Audio only'),
+    popoverHasScene: manifest.scenes.some((scene) => bodyText.includes(scene.name)),
+  };
+  console.log(`CAMPFIRE_SMOKE_RESULT ${JSON.stringify(result)}`);
+  const ok =
+    result.trayIconLoaded &&
+    result.scenes > 0 &&
+    result.sounds > 0 &&
+    result.presets > 0 &&
+    result.popoverHasCampfire &&
+    result.popoverHasStartSession &&
+    result.popoverHasAudioOnly &&
+    result.popoverHasScene;
+  app.exit(ok ? 0 : 1);
 }
 
 function registerGlobalHotkey() {
@@ -954,6 +1111,14 @@ app.whenReady().then(() => {
   powerMonitor.on('suspend', () => {
     void stopPlayback();
   });
+  if (process.env.CAMPFIRE_SHOW_POPOVER === '1') {
+    setTimeout(() => {
+      void togglePopover();
+    }, 300);
+  }
+  if (process.env.CAMPFIRE_SMOKE_TEST === '1') {
+    void runSmokeTest();
+  }
 });
 
 app.on('second-instance', () => {
