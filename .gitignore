@@ -1,0 +1,8 @@
+node_modules/
+out/
+.vite/
+dist/
+4k loops/
+sounds/*
+!sounds/.gitkeep
+.DS_Store
