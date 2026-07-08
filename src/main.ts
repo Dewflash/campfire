@@ -14,7 +14,6 @@ import {
   Tray,
 } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
-import started from 'electron-squirrel-startup';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -44,10 +43,6 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-
-if (started) {
-  app.quit();
-}
 
 const hasInstanceLock = app.requestSingleInstanceLock();
 if (!hasInstanceLock) {
