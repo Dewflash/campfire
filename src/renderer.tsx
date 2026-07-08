@@ -627,7 +627,7 @@ function AudioEngine() {
     const state = await window.campfire.getState();
     const scene = manifestRef.current.scenes.find((item) => item.id === state.currentSceneId);
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: scene ? `Campfire - ${scene.name}` : 'Campfire',
+      title: scene ? `Campfire — ${scene.name}` : 'Campfire',
       artist: 'Campfire',
       artwork: scene?.thumbnailUrl
         ? [
