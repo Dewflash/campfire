@@ -85,6 +85,7 @@ let presetsWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let stateWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let cachedMediaRoot: string | null = null;
 let cachedBundledAssetsRoot: string | null = null;
+let globalHotkeyRegistered = false;
 
 function pathExists(filePath: string) {
   try {
@@ -863,7 +864,9 @@ async function selectScene(sceneId: string) {
     sessionWindow.webContents.send('video:switch', { videoUrl: scene.videoUrl });
     sendVideoVolume();
   }
-  await applyAudioMix();
+  if (mode !== 'stopped') {
+    await applyAudioMix();
+  }
   return broadcastState();
 }
 
@@ -1058,9 +1061,53 @@ async function runSmokeTest() {
     fs.writeFileSync(process.env.CAMPFIRE_SCREENSHOT_PATH, image.toPNG());
   }
   const bodyText = (await window.webContents.executeJavaScript('document.body.innerText')) as string;
+  let videoModeWorks = true;
+  let audioOnlyWorks = true;
+  let stopWorks = true;
+  let stoppedSelectKeepsPlaybackClosed = true;
+  if (process.env.CAMPFIRE_DEEP_SMOKE === '1') {
+    const scene = manifest.scenes[0];
+    if (scene) {
+      const stoppedMix: Mix = { [MASTER_ID]: 1 };
+      const sound = manifest.sounds[0];
+      if (sound) {
+        stoppedMix[sound.id] = 0.35;
+      }
+      currentMix = normalizeMix(stoppedMix);
+      await selectScene((manifest.scenes[1] ?? scene).id);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      stoppedSelectKeepsPlaybackClosed =
+        mode === 'stopped' &&
+        Boolean(!sessionWindow || sessionWindow.isDestroyed()) &&
+        Boolean(!audioWindow || audioWindow.isDestroyed());
+
+      await startVideoSession(scene.id, { [MASTER_ID]: 1, [SCENE_SOUND_ID]: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      videoModeWorks = mode === 'video' && Boolean(sessionWindow && !sessionWindow.isDestroyed());
+      await stopPlayback(100);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      stopWorks = mode === 'stopped' && Boolean(!sessionWindow || sessionWindow.isDestroyed());
+      const audioOnlyMix: Mix = { [MASTER_ID]: 1 };
+      if (sound) {
+        audioOnlyMix[sound.id] = 0.35;
+      }
+      await startAudioOnly(audioOnlyMix, scene.id);
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      audioOnlyWorks = mode === 'audioOnly' && Boolean(audioWindow && !audioWindow.isDestroyed());
+      await stopPlayback(100);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      stopWorks = stopWorks && mode === 'stopped';
+    } else {
+      videoModeWorks = false;
+      audioOnlyWorks = false;
+      stopWorks = false;
+      stoppedSelectKeepsPlaybackClosed = false;
+    }
+  }
   const result = {
     bundledAssetsRoot: bundledAssetsRoot(),
     mediaRoot: mediaRoot(),
+    globalHotkeyRegistered,
     trayIconLoaded: !image.isEmpty(),
     scenes: manifest.scenes.length,
     sounds: manifest.sounds.length,
@@ -1070,6 +1117,10 @@ async function runSmokeTest() {
     popoverHasStartSession: bodyText.includes('Start session'),
     popoverHasAudioOnly: bodyText.includes('Audio only'),
     popoverHasScene: manifest.scenes.some((scene) => bodyText.includes(scene.name)),
+    videoModeWorks,
+    audioOnlyWorks,
+    stopWorks,
+    stoppedSelectKeepsPlaybackClosed,
   };
   console.log(`CAMPFIRE_SMOKE_RESULT ${JSON.stringify(result)}`);
   const ok =
@@ -1080,12 +1131,16 @@ async function runSmokeTest() {
     result.popoverHasCampfire &&
     result.popoverHasStartSession &&
     result.popoverHasAudioOnly &&
-    result.popoverHasScene;
+    result.popoverHasScene &&
+    result.videoModeWorks &&
+    result.audioOnlyWorks &&
+    result.stopWorks &&
+    result.stoppedSelectKeepsPlaybackClosed;
   app.exit(ok ? 0 : 1);
 }
 
 function registerGlobalHotkey() {
-  const ok = globalShortcut.register('Alt+Command+C', () => {
+  globalHotkeyRegistered = globalShortcut.register('Alt+Command+C', () => {
     if (mode === 'stopped') {
       const preset = getDefaultPreset();
       if (preset) {
@@ -1095,7 +1150,7 @@ function registerGlobalHotkey() {
       void stopPlayback();
     }
   });
-  if (!ok) {
+  if (!globalHotkeyRegistered) {
     console.warn('Unable to register Alt+Command+C global shortcut.');
   }
 }
