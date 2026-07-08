@@ -176,6 +176,31 @@ function rendererRoute(window: BrowserWindow, route: string) {
   return window.loadFile(rendererHtmlPath(), { hash: route });
 }
 
+async function waitForWebContentsLoad(window: BrowserWindow) {
+  if (!window.webContents.isLoading()) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      window.webContents.removeListener('did-finish-load', done);
+      window.webContents.removeListener('did-fail-load', done);
+      resolve();
+    };
+    const done = () => cleanup();
+    window.webContents.once('did-finish-load', done);
+    window.webContents.once('did-fail-load', done);
+    timeout = setTimeout(done, 5_000);
+  });
+}
+
+async function readBodyText(window: BrowserWindow) {
+  return (await window.webContents.executeJavaScript('document.body.innerText').catch(() => '')) as string;
+}
+
 function clamp01(value: unknown, fallback = 0) {
   const numeric = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
   return Math.max(0, Math.min(1, numeric));
@@ -638,6 +663,11 @@ async function togglePopover() {
     window.hide();
     return;
   }
+  await waitForWebContentsLoad(window);
+  if (window.isDestroyed()) {
+    return;
+  }
+  positionPopover(window);
   window.show();
   window.focus();
   broadcastState();
@@ -1060,7 +1090,7 @@ async function runSmokeTest() {
     const image = await window.webContents.capturePage();
     fs.writeFileSync(process.env.CAMPFIRE_SCREENSHOT_PATH, image.toPNG());
   }
-  const bodyText = (await window.webContents.executeJavaScript('document.body.innerText')) as string;
+  const bodyText = await readBodyText(window);
   let videoModeWorks = true;
   let audioOnlyWorks = true;
   let stopWorks = true;
@@ -1139,6 +1169,33 @@ async function runSmokeTest() {
   app.exit(ok ? 0 : 1);
 }
 
+async function runLaunchProof() {
+  const deadline = Date.now() + 5_000;
+  let bodyText = '';
+  while (Date.now() < deadline) {
+    if (popoverWindow && !popoverWindow.isDestroyed() && popoverWindow.isVisible()) {
+      bodyText = await readBodyText(popoverWindow);
+      if (bodyText.includes('Campfire') && bodyText.includes('Start session')) {
+        break;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const popoverVisible = Boolean(popoverWindow && !popoverWindow.isDestroyed() && popoverWindow.isVisible());
+  if (popoverVisible && popoverWindow && process.env.CAMPFIRE_LAUNCH_PROOF_SCREENSHOT_PATH) {
+    const image = await popoverWindow.webContents.capturePage();
+    fs.writeFileSync(process.env.CAMPFIRE_LAUNCH_PROOF_SCREENSHOT_PATH, image.toPNG());
+  }
+  const result = {
+    trayCreated: Boolean(tray),
+    popoverVisible,
+    popoverHasCampfire: bodyText.includes('Campfire'),
+    popoverHasStartSession: bodyText.includes('Start session'),
+  };
+  console.log(`CAMPFIRE_LAUNCH_PROOF_RESULT ${JSON.stringify(result)}`);
+  app.exit(result.trayCreated && result.popoverVisible && result.popoverHasCampfire && result.popoverHasStartSession ? 0 : 1);
+}
+
 function registerGlobalHotkey() {
   globalHotkeyRegistered = globalShortcut.register('Alt+Command+C', () => {
     if (mode === 'stopped') {
@@ -1166,13 +1223,18 @@ app.whenReady().then(() => {
   powerMonitor.on('suspend', () => {
     void stopPlayback();
   });
-  if (process.env.CAMPFIRE_SHOW_POPOVER === '1') {
+  const shouldShowPopoverOnLaunch =
+    process.env.CAMPFIRE_SHOW_POPOVER === '1' ||
+    (process.env.CAMPFIRE_SMOKE_TEST !== '1' && process.env.CAMPFIRE_HIDE_POPOVER_ON_LAUNCH !== '1');
+  if (shouldShowPopoverOnLaunch) {
     setTimeout(() => {
       void togglePopover();
     }, 300);
   }
   if (process.env.CAMPFIRE_SMOKE_TEST === '1') {
     void runSmokeTest();
+  } else if (process.env.CAMPFIRE_LAUNCH_PROOF === '1') {
+    void runLaunchProof();
   }
 });
 
