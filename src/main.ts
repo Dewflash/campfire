@@ -38,7 +38,10 @@ import {
 } from './types';
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'campfire', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+  {
+    scheme: 'campfire',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true },
+  },
 ]);
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
@@ -351,7 +354,7 @@ function broadcastState(fadeOutMs: number | null = null) {
 
 function sendVideoVolume() {
   if (sessionWindow && !sessionWindow.isDestroyed()) {
-    sessionWindow.webContents.send('video:volume', { value: paused ? 0 : videoVolumeForMix(currentMix) });
+    sessionWindow.webContents.send('video:volume', { value: mode === 'video' && !paused ? videoVolumeForMix(currentMix) : 0 });
   }
 }
 

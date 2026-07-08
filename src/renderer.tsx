@@ -731,6 +731,7 @@ function SessionView() {
   const { manifest, state, setState } = useCampfireData();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hideTimer = useRef<number | null>(null);
+  const volumeFrame = useRef<number | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoVisible, setVideoVisible] = useState(false);
   const [fadeDuration, setFadeDuration] = useState(600);
@@ -750,10 +751,27 @@ function SessionView() {
     }
   }, [scene?.videoUrl, videoUrl]);
 
-  const setVideoVolume = useCallback((value: number) => {
-    if (videoRef.current) {
-      videoRef.current.volume = clamp01(value);
+  const setVideoVolume = useCallback((value: number, durationMs = 150) => {
+    const video = videoRef.current;
+    if (!video) {
+      return;
     }
+    if (volumeFrame.current) {
+      window.cancelAnimationFrame(volumeFrame.current);
+    }
+    const start = video.volume;
+    const target = clamp01(value);
+    const startedAt = performance.now();
+    const step = (now: number) => {
+      const progress = durationMs <= 0 ? 1 : Math.min(1, (now - startedAt) / durationMs);
+      video.volume = start + (target - start) * progress;
+      if (progress < 1) {
+        volumeFrame.current = window.requestAnimationFrame(step);
+      } else {
+        volumeFrame.current = null;
+      }
+    };
+    volumeFrame.current = window.requestAnimationFrame(step);
   }, []);
 
   const switchVideo = useCallback((nextUrl: string) => {
@@ -769,7 +787,7 @@ function SessionView() {
   }, []);
 
   useEffect(() => {
-    const removeVolume = window.campfire.onVideoVolume(({ value }) => setVideoVolume(value));
+    const removeVolume = window.campfire.onVideoVolume(({ value }) => setVideoVolume(value, 150));
     const removeSwitch = window.campfire.onVideoSwitch(({ videoUrl: nextUrl }) => switchVideo(nextUrl));
     return () => {
       removeVolume();
@@ -781,7 +799,9 @@ function SessionView() {
     if (!state) {
       return;
     }
-    setVideoVolume(state.paused ? 0 : mixValue(state.mix, SCENE_SOUND_ID) ** 2 * mixValue(state.mix, MASTER_ID) ** 2);
+    const targetVolume =
+      state.mode === 'video' && !state.paused ? mixValue(state.mix, SCENE_SOUND_ID) ** 2 * mixValue(state.mix, MASTER_ID) ** 2 : 0;
+    setVideoVolume(targetVolume, state.mode === 'video' ? 150 : state.fadeOutMs ?? 400);
     if (state.mode !== 'video') {
       setFadeDuration(state.fadeOutMs ?? 400);
       setVideoVisible(false);
@@ -829,6 +849,9 @@ function SessionView() {
       if (hideTimer.current) {
         window.clearTimeout(hideTimer.current);
       }
+      if (volumeFrame.current) {
+        window.cancelAnimationFrame(volumeFrame.current);
+      }
     };
   }, [showOverlay]);
 
@@ -855,7 +878,7 @@ function SessionView() {
           src={videoUrl}
           style={{ transitionDuration: `${fadeDuration}ms` }}
           onLoadedData={() => {
-            setVideoVolume(state.paused ? 0 : mixValue(state.mix, SCENE_SOUND_ID) ** 2 * mixValue(state.mix, MASTER_ID) ** 2);
+            setVideoVolume(state.paused ? 0 : mixValue(state.mix, SCENE_SOUND_ID) ** 2 * mixValue(state.mix, MASTER_ID) ** 2, 0);
             void videoRef.current?.play().catch(console.warn);
           }}
         />
