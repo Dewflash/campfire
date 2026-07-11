@@ -11,6 +11,7 @@
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "smoke": "CAMPFIRE_SMOKE_TEST=1 electron-forge start",
+    "verify": "npm run typecheck && npm run lint && CAMPFIRE_DEEP_SMOKE=1 npm run smoke",
     "typecheck": "tsc --noEmit",
     "lint": "eslint --ext .ts,.tsx ."
   },
