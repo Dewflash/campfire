@@ -733,6 +733,9 @@ function SessionView() {
   const hideTimer = useRef<number | null>(null);
   const volumeFrame = useRef<number | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [posterUrl, setPosterUrl] = useState<string | null>(null);
+  const [videoReady, setVideoReady] = useState(false);
+  const videoUrlRef = useRef<string | null>(null);
   const [videoVisible, setVideoVisible] = useState(false);
   const [fadeDuration, setFadeDuration] = useState(600);
   const [overlayVisible, setOverlayVisible] = useState(true);
@@ -745,11 +748,14 @@ function SessionView() {
   );
 
   useEffect(() => {
-    if (scene?.videoUrl && !videoUrl) {
+    if (state?.mode === 'video' && scene?.videoUrl && !videoUrl) {
+      setPosterUrl(scene.posterUrl);
+      setVideoReady(false);
+      videoUrlRef.current = scene.videoUrl;
       setVideoUrl(scene.videoUrl);
       window.setTimeout(() => setVideoVisible(true), 80);
     }
-  }, [scene?.videoUrl, videoUrl]);
+  }, [scene, state?.mode, videoUrl]);
 
   const setVideoVolume = useCallback((value: number, durationMs = 150) => {
     const video = videoRef.current;
@@ -763,7 +769,7 @@ function SessionView() {
     const target = clamp01(value);
     const startedAt = performance.now();
     const step = (now: number) => {
-      const progress = durationMs <= 0 ? 1 : Math.min(1, (now - startedAt) / durationMs);
+      const progress = durationMs <= 0 ? 1 : Math.max(0, Math.min(1, (now - startedAt) / durationMs));
       video.volume = start + (target - start) * progress;
       if (progress < 1) {
         volumeFrame.current = window.requestAnimationFrame(step);
@@ -774,10 +780,17 @@ function SessionView() {
     volumeFrame.current = window.requestAnimationFrame(step);
   }, []);
 
-  const switchVideo = useCallback((nextUrl: string) => {
+  const switchVideo = useCallback((nextUrl: string, nextPoster: string | null) => {
+    setPosterUrl(nextPoster);
+    if (nextUrl === videoUrlRef.current) {
+      setVideoVisible(true);
+      return;
+    }
     setFadeDuration(300);
     setVideoVisible(false);
+    setVideoReady(false);
     window.setTimeout(() => {
+      videoUrlRef.current = nextUrl;
       setVideoUrl(nextUrl);
       window.requestAnimationFrame(() => {
         setFadeDuration(300);
@@ -788,7 +801,9 @@ function SessionView() {
 
   useEffect(() => {
     const removeVolume = window.campfire.onVideoVolume(({ value }) => setVideoVolume(value, 150));
-    const removeSwitch = window.campfire.onVideoSwitch(({ videoUrl: nextUrl }) => switchVideo(nextUrl));
+    const removeSwitch = window.campfire.onVideoSwitch(({ videoUrl: nextUrl, posterUrl: nextPoster }) =>
+      switchVideo(nextUrl, nextPoster),
+    );
     return () => {
       removeVolume();
       removeSwitch();
@@ -866,12 +881,21 @@ function SessionView() {
       className={`relative h-screen w-screen overflow-hidden bg-black text-stone-50 ${cursorHidden ? 'cursor-none' : ''}`}
       onMouseMove={showOverlay}
     >
+      {posterUrl && (
+        <img
+          alt=""
+          className="absolute inset-0 z-0 h-full w-full object-cover object-center transition-opacity ease-out"
+          draggable={false}
+          src={posterUrl}
+          style={{ opacity: state.mode === 'video' ? 1 : 0, transitionDuration: `${fadeDuration}ms` }}
+        />
+      )}
       {videoUrl && (
         <video
           ref={videoRef}
           autoPlay
-          className={`h-full w-full object-cover object-center transition-opacity ease-out ${
-            videoVisible && !state.paused ? 'opacity-100' : 'opacity-0'
+          className={`relative z-10 h-full w-full object-cover object-center transition-opacity ease-out ${
+            videoVisible && videoReady && !state.paused ? 'opacity-100' : 'opacity-0'
           }`}
           loop
           playsInline
@@ -881,16 +905,17 @@ function SessionView() {
             setVideoVolume(state.paused ? 0 : mixValue(state.mix, SCENE_SOUND_ID) ** 2 * mixValue(state.mix, MASTER_ID) ** 2, 0);
             void videoRef.current?.play().catch(console.warn);
           }}
+          onPlaying={() => setVideoReady(true)}
         />
       )}
-      <div className="pointer-events-none absolute inset-0 bg-black" style={{ opacity: clamp01(state.settings.videoDimmer) * 0.6 }} />
+      <div className="pointer-events-none absolute inset-0 z-20 bg-black" style={{ opacity: clamp01(state.settings.videoDimmer) * 0.6 }} />
 
       {state.settings.showClock && (
-        <div className="pointer-events-none absolute right-8 top-7 text-[20px] font-light text-stone-200/70">{clockText}</div>
+        <div className="pointer-events-none absolute right-8 top-7 z-30 text-[20px] font-light text-stone-200/70">{clockText}</div>
       )}
 
       <div
-        className={`absolute bottom-8 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-full bg-stone-900/70 px-4 py-2 text-stone-200 shadow-2xl backdrop-blur transition-all duration-200 ${
+        className={`absolute bottom-8 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-stone-900/70 px-4 py-2 text-stone-200 shadow-2xl backdrop-blur transition-all duration-200 ${
           overlayVisible ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'
         }`}
       >

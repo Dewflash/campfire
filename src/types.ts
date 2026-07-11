@@ -11,6 +11,7 @@ export interface SceneManifest {
   fileName: string;
   videoUrl: string;
   thumbnailUrl: string | null;
+  posterUrl: string | null;
 }
 
 export interface SoundManifest {
@@ -114,7 +115,7 @@ export interface CampfireApi {
   onAudioVolume: (callback: (payload: { channelId: string; value: number }) => void) => () => void;
   onAudioFadeOutAndStop: (callback: (payload?: { durationMs?: number }) => void) => () => void;
   onVideoVolume: (callback: (payload: { value: number }) => void) => () => void;
-  onVideoSwitch: (callback: (payload: { videoUrl: string }) => void) => () => void;
+  onVideoSwitch: (callback: (payload: { videoUrl: string; posterUrl: string | null }) => void) => () => void;
 }
 
 declare global {

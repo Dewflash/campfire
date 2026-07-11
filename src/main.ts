@@ -64,6 +64,8 @@ const TIMER_OPTIONS: TimerMinutes[] = [15, 30, 60, 90];
 let tray: Tray | null = null;
 let popoverWindow: BrowserWindow | null = null;
 let sessionWindow: BrowserWindow | null = null;
+let sessionWindowIdle = false;
+let sessionReady: Promise<void> | null = null;
 let audioWindow: BrowserWindow | null = null;
 let audioReady: Promise<void> | null = null;
 let dimWindows: BrowserWindow[] = [];
@@ -201,6 +203,23 @@ async function readBodyText(window: BrowserWindow) {
   return (await window.webContents.executeJavaScript('document.body.innerText').catch(() => '')) as string;
 }
 
+async function waitForImages(window: BrowserWindow) {
+  await window.webContents
+    .executeJavaScript(`
+      Promise.race([
+        Promise.all(Array.from(document.images).map((img) => {
+          if (img.complete && img.naturalWidth > 0) return true;
+          return new Promise((resolve) => {
+            img.addEventListener('load', resolve, { once: true });
+            img.addEventListener('error', resolve, { once: true });
+          });
+        })),
+        new Promise((resolve) => setTimeout(resolve, 5000))
+      ])
+    `)
+    .catch(console.warn);
+}
+
 function clamp01(value: unknown, fallback = 0) {
   const numeric = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
   return Math.max(0, Math.min(1, numeric));
@@ -312,6 +331,7 @@ function scanManifest(): MediaManifest {
             fileName,
             videoUrl: mediaUrl('4k loops', fileName),
             thumbnailUrl: hasThumbnail ? cachedThumbnailUrl(baseName, path.join(videoDir, thumbnailName)) : null,
+            posterUrl: hasThumbnail ? mediaUrl('4k loops', thumbnailName) : null,
           };
         })
     : [];
@@ -468,6 +488,12 @@ function broadcastState(fadeOutMs: number | null = null) {
 function sendVideoVolume() {
   if (sessionWindow && !sessionWindow.isDestroyed()) {
     sessionWindow.webContents.send('video:volume', { value: mode === 'video' && !paused ? videoVolumeForMix(currentMix) : 0 });
+  }
+}
+
+function sendVideoSwitch(scene: SceneManifest) {
+  if (sessionWindow && !sessionWindow.isDestroyed()) {
+    sessionWindow.webContents.send('video:switch', { videoUrl: scene.videoUrl, posterUrl: scene.posterUrl });
   }
 }
 
@@ -694,7 +720,14 @@ async function ensureAudioWindow() {
     audioWindow = null;
     audioReady = null;
   });
-  audioReady = rendererRoute(audioWindow, '/audio').then((): void => undefined);
+  const window = audioWindow;
+  audioReady = rendererRoute(window, '/audio')
+    .then((): void => undefined)
+    .catch((error) => {
+      if (!isQuitting && !window.isDestroyed()) {
+        console.warn('Unable to load audio renderer', error);
+      }
+    });
   await audioReady;
   return audioWindow;
 }
@@ -703,48 +736,86 @@ function targetDisplayForSession() {
   return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
 }
 
-async function ensureSessionWindow(scene: SceneManifest) {
-  if (sessionWindow && !sessionWindow.isDestroyed()) {
-    sessionWindow.webContents.send('video:switch', { videoUrl: scene.videoUrl });
-    sendVideoVolume();
-    return sessionWindow;
-  }
-
-  const targetDisplay = targetDisplayForSession();
-  sessionWindow = new BrowserWindow({
-    x: targetDisplay.bounds.x,
-    y: targetDisplay.bounds.y,
-    width: targetDisplay.bounds.width,
-    height: targetDisplay.bounds.height,
+function createSessionWindow() {
+  const window = new BrowserWindow({
+    x: 0,
+    y: 0,
+    width: 800,
+    height: 600,
     show: false,
     frame: false,
     fullscreen: false,
-    simpleFullscreen: true,
     backgroundColor: '#000000',
+    skipTaskbar: true,
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
-  sessionWindow.on('close', (event) => {
+  window.on('close', (event) => {
     if (!isQuitting && mode === 'video') {
       event.preventDefault();
       void stopPlayback();
     }
   });
-  sessionWindow.on('closed', () => {
-    sessionWindow = null;
+  window.on('closed', () => {
+    if (sessionWindow === window) {
+      sessionWindow = null;
+      sessionWindowIdle = false;
+      sessionReady = null;
+    }
     stopPowerSaveBlocker();
   });
-  await rendererRoute(sessionWindow, '/session');
-  if (!sessionWindow.isDestroyed()) {
-    sessionWindow.setBounds(targetDisplay.bounds);
-    sessionWindow.show();
-    sessionWindow.setSimpleFullScreen(true);
-    startPowerSaveBlocker();
-    refreshDimWindows(targetDisplay.id);
+  sessionReady = rendererRoute(window, '/session')
+    .then((): void => undefined)
+    .catch((error) => {
+      if (!isQuitting && !window.isDestroyed()) {
+        console.warn('Unable to load session renderer', error);
+      }
+    });
+  return window;
+}
+
+function prewarmSessionWindow() {
+  if (isQuitting || (sessionWindow && !sessionWindow.isDestroyed())) {
+    return;
   }
+  sessionWindow = createSessionWindow();
+  sessionWindowIdle = true;
+}
+
+async function activateSessionWindow(scene: SceneManifest) {
+  await sessionReady;
+  if (!sessionWindow || sessionWindow.isDestroyed()) {
+    sessionWindow = createSessionWindow();
+    sessionWindowIdle = true;
+    await sessionReady;
+    if (!sessionWindow || sessionWindow.isDestroyed()) {
+      return;
+    }
+  }
+  const targetDisplay = targetDisplayForSession();
+  sessionWindow.setBounds(targetDisplay.bounds);
+  sendVideoSwitch(scene);
+  sessionWindow.show();
+  sessionWindow.setSimpleFullScreen(true);
+  sessionWindowIdle = false;
+  startPowerSaveBlocker();
+  refreshDimWindows(targetDisplay.id);
+}
+
+async function ensureSessionWindow(scene: SceneManifest) {
+  if (sessionWindow && !sessionWindow.isDestroyed() && !sessionWindowIdle) {
+    sendVideoSwitch(scene);
+    sendVideoVolume();
+    return sessionWindow;
+  }
+  if (!sessionWindow || sessionWindow.isDestroyed()) {
+    sessionWindow = createSessionWindow();
+    sessionWindowIdle = true;
+  }
+  await activateSessionWindow(scene);
   return sessionWindow;
 }
 
@@ -812,6 +883,7 @@ function destroySessionWindowAfter(fadeMs: number, generation: number) {
     }
     closeDimWindows();
     stopPowerSaveBlocker();
+    prewarmSessionWindow();
   }, fadeMs + 80);
 }
 
@@ -891,7 +963,7 @@ async function selectScene(sceneId: string) {
   }
   currentSceneId = scene.id;
   if (mode === 'video' && sessionWindow && !sessionWindow.isDestroyed()) {
-    sessionWindow.webContents.send('video:switch', { videoUrl: scene.videoUrl });
+    sendVideoSwitch(scene);
     sendVideoVolume();
   }
   if (mode !== 'stopped') {
@@ -1071,24 +1143,15 @@ async function runSmokeTest() {
   });
   window.show();
   await new Promise((resolve) => setTimeout(resolve, 750));
-  await window.webContents
-    .executeJavaScript(`
-      Promise.race([
-        Promise.all(Array.from(document.images).map((img) => {
-          if (img.complete && img.naturalWidth > 0) return true;
-          return new Promise((resolve) => {
-            img.addEventListener('load', resolve, { once: true });
-            img.addEventListener('error', resolve, { once: true });
-          });
-        })),
-        new Promise((resolve) => setTimeout(resolve, 5000))
-      ])
-    `)
-    .catch(console.warn);
+  await waitForImages(window);
   await new Promise((resolve) => setTimeout(resolve, 250));
   if (process.env.CAMPFIRE_SCREENSHOT_PATH) {
-    const image = await window.webContents.capturePage();
-    fs.writeFileSync(process.env.CAMPFIRE_SCREENSHOT_PATH, image.toPNG());
+    try {
+      const image = await window.webContents.capturePage();
+      fs.writeFileSync(process.env.CAMPFIRE_SCREENSHOT_PATH, image.toPNG());
+    } catch (error) {
+      console.warn('Unable to capture smoke screenshot', error);
+    }
   }
   const bodyText = await readBodyText(window);
   let videoModeWorks = true;
@@ -1107,16 +1170,14 @@ async function runSmokeTest() {
       await selectScene((manifest.scenes[1] ?? scene).id);
       await new Promise((resolve) => setTimeout(resolve, 250));
       stoppedSelectKeepsPlaybackClosed =
-        mode === 'stopped' &&
-        Boolean(!sessionWindow || sessionWindow.isDestroyed()) &&
-        Boolean(!audioWindow || audioWindow.isDestroyed());
+        mode === 'stopped' && Boolean(!sessionWindow || sessionWindow.isDestroyed() || !sessionWindow.isVisible());
 
       await startVideoSession(scene.id, { [MASTER_ID]: 1, [SCENE_SOUND_ID]: 0 });
       await new Promise((resolve) => setTimeout(resolve, 1200));
-      videoModeWorks = mode === 'video' && Boolean(sessionWindow && !sessionWindow.isDestroyed());
+      videoModeWorks = mode === 'video' && Boolean(sessionWindow && !sessionWindow.isDestroyed() && sessionWindow.isVisible());
       await stopPlayback(100);
       await new Promise((resolve) => setTimeout(resolve, 250));
-      stopWorks = mode === 'stopped' && Boolean(!sessionWindow || sessionWindow.isDestroyed());
+      stopWorks = mode === 'stopped' && Boolean(!sessionWindow || sessionWindow.isDestroyed() || !sessionWindow.isVisible());
       const audioOnlyMix: Mix = { [MASTER_ID]: 1 };
       if (sound) {
         audioOnlyMix[sound.id] = 0.35;
@@ -1126,7 +1187,10 @@ async function runSmokeTest() {
       audioOnlyWorks = mode === 'audioOnly' && Boolean(audioWindow && !audioWindow.isDestroyed());
       await stopPlayback(100);
       await new Promise((resolve) => setTimeout(resolve, 250));
-      stopWorks = stopWorks && mode === 'stopped';
+      stopWorks =
+        stopWorks &&
+        mode === 'stopped' &&
+        Boolean(!sessionWindow || sessionWindow.isDestroyed() || !sessionWindow.isVisible());
     } else {
       videoModeWorks = false;
       audioOnlyWorks = false;
@@ -1171,6 +1235,8 @@ async function runSmokeTest() {
 
 async function runLaunchProof() {
   const deadline = Date.now() + 5_000;
+  const startedAt = Date.now();
+  let retriedPopover = false;
   let bodyText = '';
   while (Date.now() < deadline) {
     if (popoverWindow && !popoverWindow.isDestroyed() && popoverWindow.isVisible()) {
@@ -1178,13 +1244,24 @@ async function runLaunchProof() {
       if (bodyText.includes('Campfire') && bodyText.includes('Start session')) {
         break;
       }
+    } else if (!retriedPopover && Date.now() - startedAt > 800) {
+      retriedPopover = true;
+      await togglePopover();
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   const popoverVisible = Boolean(popoverWindow && !popoverWindow.isDestroyed() && popoverWindow.isVisible());
+  if (popoverVisible && popoverWindow) {
+    await waitForImages(popoverWindow);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
   if (popoverVisible && popoverWindow && process.env.CAMPFIRE_LAUNCH_PROOF_SCREENSHOT_PATH) {
-    const image = await popoverWindow.webContents.capturePage();
-    fs.writeFileSync(process.env.CAMPFIRE_LAUNCH_PROOF_SCREENSHOT_PATH, image.toPNG());
+    try {
+      const image = await popoverWindow.webContents.capturePage();
+      fs.writeFileSync(process.env.CAMPFIRE_LAUNCH_PROOF_SCREENSHOT_PATH, image.toPNG());
+    } catch (error) {
+      console.warn('Unable to capture launch proof screenshot', error);
+    }
   }
   const result = {
     trayCreated: Boolean(tray),
@@ -1220,6 +1297,10 @@ app.whenReady().then(() => {
   registerIpcHandlers();
   createTray();
   registerGlobalHotkey();
+  setTimeout(() => {
+    prewarmSessionWindow();
+    void ensureAudioWindow();
+  }, 1500);
   powerMonitor.on('suspend', () => {
     void stopPlayback();
   });

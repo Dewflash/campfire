@@ -42,7 +42,8 @@ const api: CampfireApi = {
   onAudioFadeOutAndStop: (callback: (payload?: { durationMs?: number }) => void) =>
     onChannel('audio:fadeOutAndStop', callback),
   onVideoVolume: (callback: (payload: { value: number }) => void) => onChannel('video:volume', callback),
-  onVideoSwitch: (callback: (payload: { videoUrl: string }) => void) => onChannel('video:switch', callback),
+  onVideoSwitch: (callback: (payload: { videoUrl: string; posterUrl: string | null }) => void) =>
+    onChannel('video:switch', callback),
 };
 
 contextBridge.exposeInMainWorld('campfire', api);
