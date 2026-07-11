@@ -443,7 +443,7 @@ function PopoverApp() {
 
   return (
     <main className="h-screen overflow-hidden bg-transparent p-[10px] font-[system-ui]">
-      <div className="flex h-full flex-col overflow-hidden rounded-[22px] border border-white/[0.08] bg-stone-900/[0.97] p-[18px] text-stone-50 shadow-2xl">
+      <div className="flex h-full flex-col overflow-hidden rounded-[22px] border border-white/[0.08] bg-stone-900/[0.97] p-[18px] text-stone-50">
         <header className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-400/15 text-amber-300">

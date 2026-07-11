@@ -633,6 +633,7 @@ function createPopoverWindow() {
     show: false,
     frame: false,
     transparent: true,
+    hasShadow: false,
     resizable: false,
     movable: false,
     alwaysOnTop: true,
