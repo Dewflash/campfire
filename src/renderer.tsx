@@ -23,6 +23,7 @@ import {
   type Mix,
   type Preset,
   type SceneManifest,
+  type Settings,
   type SoundManifest,
   type TimerMinutes,
 } from './types';
@@ -259,8 +260,81 @@ function PresetContextMenu({
   );
 }
 
+function SettingToggle({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      aria-pressed={checked}
+      className="flex min-h-[42px] w-full items-center justify-between gap-3 text-left transition-all duration-200"
+      type="button"
+      onClick={() => onChange(!checked)}
+    >
+      <span className="truncate text-[13px] font-medium text-stone-200">{label}</span>
+      <span
+        className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-all duration-200 ${
+          checked ? 'bg-amber-400' : 'bg-stone-700'
+        }`}
+      >
+        <span
+          className={`h-5 w-5 rounded-full bg-stone-950 shadow-sm transition-all duration-200 ${checked ? 'translate-x-5' : ''}`}
+        />
+      </span>
+    </button>
+  );
+}
+
+function SettingsPanel({
+  settings,
+  onSetSetting,
+  onOpenPresetsFile,
+}: {
+  settings: Settings;
+  onSetSetting: (key: keyof Settings, value: boolean | number) => void;
+  onOpenPresetsFile: () => void;
+}) {
+  return (
+    <section>
+      <SectionLabel>Settings</SectionLabel>
+      <div className="divide-y divide-white/[0.06] rounded-2xl border border-white/[0.06] px-3">
+        <SettingToggle checked={settings.showClock} label="Show clock" onChange={(checked) => onSetSetting('showClock', checked)} />
+        <SettingToggle
+          checked={settings.dimOtherDisplays}
+          label="Dim other displays"
+          onChange={(checked) => onSetSetting('dimOtherDisplays', checked)}
+        />
+        <div className="py-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="truncate text-[13px] font-medium text-stone-200">Video dimmer</span>
+            <span className="text-[11px] tabular-nums text-stone-500">{Math.round(clamp01(settings.videoDimmer) * 100)}%</span>
+          </div>
+          <Slider title="Video dimmer" value={clamp01(settings.videoDimmer)} onChange={(value) => onSetSetting('videoDimmer', value)} />
+        </div>
+      </div>
+
+      <section className="mt-4">
+        <SectionLabel>Advanced</SectionLabel>
+        <button
+          className="h-9 rounded-xl border border-stone-700 px-3 text-[12px] font-medium text-stone-300 transition-all duration-200 hover:border-stone-500 hover:bg-white/5 active:scale-[0.98]"
+          type="button"
+          onClick={onOpenPresetsFile}
+        >
+          Reveal presets file
+        </button>
+      </section>
+    </section>
+  );
+}
+
 function PopoverApp() {
   const { manifest, state, setState } = useCampfireData();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [expandedSounds, setExpandedSounds] = useState(false);
   const [saveName, setSaveName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -294,8 +368,21 @@ function PopoverApp() {
     [optimisticState, setState],
   );
 
+  const setSetting = useCallback(
+    (key: keyof Settings, value: boolean | number) => {
+      optimisticState((previous) => ({ ...previous, settings: { ...previous.settings, [key]: value } }));
+      void window.campfire.setSetting({ key, value }).then(setState);
+    },
+    [optimisticState, setState],
+  );
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && settingsOpen) {
+        event.preventDefault();
+        setSettingsOpen(false);
+        return;
+      }
       const target = event.target as HTMLElement | null;
       if (target?.tagName === 'INPUT') {
         if (event.key === 'Escape') {
@@ -321,7 +408,7 @@ function PopoverApp() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [currentMix, manifest.scenes, selectScene, selectedScene, selectedSceneId, setState]);
+  }, [currentMix, manifest.scenes, selectScene, selectedScene, selectedSceneId, setState, settingsOpen]);
 
   if (!state) {
     return (
@@ -366,126 +453,143 @@ function PopoverApp() {
           </div>
           <div className="flex items-center gap-1">
             <TimerButton state={state} />
-            <IconButton title="Open presets JSON" onClick={() => void window.campfire.openPresetsFile()}>
+            <IconButton
+              className={settingsOpen ? 'bg-amber-400/15 text-amber-300' : ''}
+              title="Settings"
+              onClick={() => setSettingsOpen((value) => !value)}
+            >
               <SettingsIcon size={15} />
             </IconButton>
           </div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-4 pr-1">
-          <section>
-            <SectionLabel>Scenes</SectionLabel>
-            <div className="grid grid-cols-3 gap-[10px]">
-              {manifest.scenes.map((scene) => (
-                <SceneTile
-                  key={scene.id}
-                  playing={state.mode === 'video' && state.currentSceneId === scene.id}
-                  scene={scene}
-                  selected={selectedSceneId === scene.id}
-                  onSelect={() => selectScene(scene.id)}
-                />
-              ))}
-            </div>
-          </section>
-
-          <section className="mt-4">
-            <SectionLabel>Sound mix</SectionLabel>
-            <div className="space-y-1">
-              <SoundRow
-                channelId={SCENE_SOUND_ID}
-                disabled={sceneSoundDisabled}
-                icon={<FlameIcon size={14} />}
-                label="Scene sound"
-                value={mixValue(currentMix, SCENE_SOUND_ID)}
-                onChange={setMix}
-              />
-
-              {manifest.sounds.length === 0 ? (
-                <div className="rounded-xl border border-white/[0.06] px-3 py-2 text-[12px] text-stone-500">
-                  Drop .mp3 loops into the sounds folder
+          {settingsOpen ? (
+            <SettingsPanel
+              settings={state.settings}
+              onOpenPresetsFile={() => void window.campfire.openPresetsFile()}
+              onSetSetting={setSetting}
+            />
+          ) : (
+            <>
+              <section>
+                <SectionLabel>Scenes</SectionLabel>
+                <div className="grid grid-cols-3 gap-[10px]">
+                  {manifest.scenes.map((scene) => (
+                    <SceneTile
+                      key={scene.id}
+                      playing={state.mode === 'video' && state.currentSceneId === scene.id}
+                      scene={scene}
+                      selected={selectedSceneId === scene.id}
+                      onSelect={() => selectScene(scene.id)}
+                    />
+                  ))}
                 </div>
-              ) : (
-                visibleSounds.map((sound) => (
+              </section>
+
+              <section className="mt-4">
+                <SectionLabel>Sound mix</SectionLabel>
+                <div className="space-y-1">
                   <SoundRow
-                    key={sound.id}
-                    channelId={sound.id}
-                    icon={<SoundIcon name={sound.icon} size={14} />}
-                    label={sound.name}
-                    value={mixValue(currentMix, sound.id)}
+                    channelId={SCENE_SOUND_ID}
+                    disabled={sceneSoundDisabled}
+                    icon={<FlameIcon size={14} />}
+                    label="Scene sound"
+                    value={mixValue(currentMix, SCENE_SOUND_ID)}
                     onChange={setMix}
                   />
-                ))
-              )}
 
-              {manifest.sounds.length > 6 && (
-                <button
-                  className="flex h-7 items-center gap-1 rounded-full px-2 text-[11px] text-stone-500 transition-all duration-200 hover:bg-white/5 hover:text-stone-300"
-                  type="button"
-                  onClick={() => setExpandedSounds((value) => !value)}
-                >
-                  <ChevronDownIcon className={expandedSounds ? 'rotate-180 transition-all duration-200' : 'transition-all duration-200'} size={13} />
-                  {expandedSounds ? 'fewer channels' : `${manifest.sounds.length - 6} more channels`}
-                </button>
-              )}
+                  {manifest.sounds.length === 0 ? (
+                    <div className="rounded-xl border border-white/[0.06] px-3 py-2 text-[12px] text-stone-500">
+                      Drop .mp3 loops into the sounds folder
+                    </div>
+                  ) : (
+                    visibleSounds.map((sound) => (
+                      <SoundRow
+                        key={sound.id}
+                        channelId={sound.id}
+                        icon={<SoundIcon name={sound.icon} size={14} />}
+                        label={sound.name}
+                        value={mixValue(currentMix, sound.id)}
+                        onChange={setMix}
+                      />
+                    ))
+                  )}
 
-              <SoundRow
-                channelId={MASTER_ID}
-                icon={<SoundIcon name="audio-waveform" size={14} />}
-                label="Master"
-                value={mixValue(currentMix, MASTER_ID)}
-                onChange={setMix}
-              />
-            </div>
-          </section>
+                  {manifest.sounds.length > 6 && (
+                    <button
+                      className="flex h-7 items-center gap-1 rounded-full px-2 text-[11px] text-stone-500 transition-all duration-200 hover:bg-white/5 hover:text-stone-300"
+                      type="button"
+                      onClick={() => setExpandedSounds((value) => !value)}
+                    >
+                      <ChevronDownIcon
+                        className={expandedSounds ? 'rotate-180 transition-all duration-200' : 'transition-all duration-200'}
+                        size={13}
+                      />
+                      {expandedSounds ? 'fewer channels' : `${manifest.sounds.length - 6} more channels`}
+                    </button>
+                  )}
 
-          <section className="mt-4">
-            <SectionLabel>Presets</SectionLabel>
-            <div className="flex flex-wrap gap-2">
-              {state.presets.map((preset) => (
-                <button
-                  key={preset.id}
-                  className={`flex max-w-[160px] items-center gap-1 rounded-full px-3 py-1.5 text-[12px] transition-all duration-200 active:scale-[0.98] ${
-                    preset.id === state.activePresetId
-                      ? 'bg-amber-400/15 text-amber-300'
-                      : 'border border-stone-700 text-stone-400 hover:border-stone-500 hover:text-stone-200'
-                  }`}
-                  type="button"
-                  onClick={() => void window.campfire.applyPreset({ id: preset.id }).then(setState)}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setContextMenu({ x: event.clientX, y: event.clientY, preset });
-                  }}
-                >
-                  {preset.isDefault && <StarIcon size={10} />}
-                  <span className="truncate">{preset.name}</span>
-                </button>
-              ))}
+                  <SoundRow
+                    channelId={MASTER_ID}
+                    icon={<SoundIcon name="audio-waveform" size={14} />}
+                    label="Master"
+                    value={mixValue(currentMix, MASTER_ID)}
+                    onChange={setMix}
+                  />
+                </div>
+              </section>
 
-              {saving ? (
-                <input
-                  autoFocus
-                  className="h-[28px] w-28 rounded-full border border-amber-400/30 bg-stone-950 px-3 text-[12px] text-stone-200 outline-none ring-1 ring-amber-400/30"
-                  placeholder="Name"
-                  value={saveName}
-                  onBlur={() => {
-                    if (!saveName.trim()) {
-                      setSaving(false);
-                    }
-                  }}
-                  onChange={(event) => setSaveName(event.currentTarget.value)}
-                  onKeyDown={handlePresetKey}
-                />
-              ) : (
-                <button
-                  className="rounded-full border border-stone-700 px-3 py-1.5 text-[12px] text-stone-400 transition-all duration-200 hover:border-amber-400/40 hover:text-amber-300 active:scale-[0.98]"
-                  type="button"
-                  onClick={() => setSaving(true)}
-                >
-                  + save
-                </button>
-              )}
-            </div>
-          </section>
+              <section className="mt-4">
+                <SectionLabel>Presets</SectionLabel>
+                <div className="flex flex-wrap gap-2">
+                  {state.presets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      className={`flex max-w-[160px] items-center gap-1 rounded-full px-3 py-1.5 text-[12px] transition-all duration-200 active:scale-[0.98] ${
+                        preset.id === state.activePresetId
+                          ? 'bg-amber-400/15 text-amber-300'
+                          : 'border border-stone-700 text-stone-400 hover:border-stone-500 hover:text-stone-200'
+                      }`}
+                      type="button"
+                      onClick={() => void window.campfire.applyPreset({ id: preset.id }).then(setState)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setContextMenu({ x: event.clientX, y: event.clientY, preset });
+                      }}
+                    >
+                      {preset.isDefault && <StarIcon size={10} />}
+                      <span className="truncate">{preset.name}</span>
+                    </button>
+                  ))}
+
+                  {saving ? (
+                    <input
+                      autoFocus
+                      className="h-[28px] w-28 rounded-full border border-amber-400/30 bg-stone-950 px-3 text-[12px] text-stone-200 outline-none ring-1 ring-amber-400/30"
+                      placeholder="Name"
+                      value={saveName}
+                      onBlur={() => {
+                        if (!saveName.trim()) {
+                          setSaving(false);
+                        }
+                      }}
+                      onChange={(event) => setSaveName(event.currentTarget.value)}
+                      onKeyDown={handlePresetKey}
+                    />
+                  ) : (
+                    <button
+                      className="rounded-full border border-stone-700 px-3 py-1.5 text-[12px] text-stone-400 transition-all duration-200 hover:border-amber-400/40 hover:text-amber-300 active:scale-[0.98]"
+                      type="button"
+                      onClick={() => setSaving(true)}
+                    >
+                      + save
+                    </button>
+                  )}
+                </div>
+              </section>
+            </>
+          )}
         </div>
 
         <footer className="mt-4">

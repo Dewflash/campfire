@@ -1154,6 +1154,20 @@ async function runSmokeTest() {
     }
   }
   const bodyText = await readBodyText(window);
+  const settingsText = String(
+    await window.webContents.executeJavaScript(
+      `(() => {
+        const button = document.querySelector('button[title="Settings"]');
+        if (!(button instanceof HTMLButtonElement)) {
+          return '';
+        }
+        button.click();
+        return new Promise((resolve) => window.setTimeout(() => resolve(document.body.innerText), 150));
+      })()`,
+    ),
+  );
+  await window.webContents.executeJavaScript(`document.querySelector('button[title="Settings"]')?.click()`);
+  const normalizedSettingsText = settingsText.toLowerCase();
   let videoModeWorks = true;
   let audioOnlyWorks = true;
   let stopWorks = true;
@@ -1211,6 +1225,11 @@ async function runSmokeTest() {
     popoverHasStartSession: bodyText.includes('Start session'),
     popoverHasAudioOnly: bodyText.includes('Audio only'),
     popoverHasScene: manifest.scenes.some((scene) => bodyText.includes(scene.name)),
+    popoverHasSettings:
+      normalizedSettingsText.includes('settings') &&
+      normalizedSettingsText.includes('show clock') &&
+      normalizedSettingsText.includes('dim other displays') &&
+      normalizedSettingsText.includes('video dimmer'),
     videoModeWorks,
     audioOnlyWorks,
     stopWorks,
@@ -1226,6 +1245,7 @@ async function runSmokeTest() {
     result.popoverHasStartSession &&
     result.popoverHasAudioOnly &&
     result.popoverHasScene &&
+    result.popoverHasSettings &&
     result.videoModeWorks &&
     result.audioOnlyWorks &&
     result.stopWorks &&
