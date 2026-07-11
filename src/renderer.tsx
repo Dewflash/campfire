@@ -166,14 +166,14 @@ function SceneTile({
       onClick={onSelect}
     >
       <div
-        className={`aspect-[16/10] overflow-hidden rounded-2xl bg-stone-800 transition-all duration-200 ${
+        className={`relative aspect-[16/10] overflow-hidden rounded-2xl bg-stone-800 transition-all duration-200 ${
           selected ? 'ring-2 ring-amber-400' : 'ring-1 ring-white/[0.06]'
         }`}
       >
         {scene.thumbnailUrl ? (
-          <img alt="" className="h-full w-full object-cover" draggable={false} src={scene.thumbnailUrl} />
+          <img alt="" className="absolute inset-0 block h-full w-full object-cover" draggable={false} src={scene.thumbnailUrl} />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-stone-800 text-stone-600">
+          <div className="absolute inset-0 flex h-full w-full items-center justify-center bg-stone-800 text-stone-600">
             <FlameIcon size={18} />
           </div>
         )}
@@ -372,7 +372,7 @@ function PopoverApp() {
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="min-h-0 flex-1 overflow-y-auto pb-4 pr-1">
           <section>
             <SectionLabel>Scenes</SectionLabel>
             <div className="grid grid-cols-3 gap-[10px]">
