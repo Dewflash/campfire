@@ -162,12 +162,12 @@ function SceneTile({
 }) {
   return (
     <button
-      className="group min-w-0 text-left transition-all duration-200 hover:scale-[1.02] focus:outline-none"
+      className="group w-full min-w-0 text-left transition-all duration-200 hover:scale-[1.02] focus:outline-none"
       type="button"
       onClick={onSelect}
     >
       <div
-        className={`relative aspect-[16/10] overflow-hidden rounded-2xl bg-stone-800 transition-all duration-200 ${
+        className={`relative aspect-video w-full min-w-0 overflow-hidden rounded-2xl bg-stone-800 transition-all duration-200 ${
           selected ? 'ring-2 ring-amber-400' : 'ring-1 ring-white/[0.06]'
         }`}
       >
@@ -463,7 +463,7 @@ function PopoverApp() {
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pb-4 pr-1">
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-4 pr-1">
           {settingsOpen ? (
             <SettingsPanel
               settings={state.settings}
@@ -474,7 +474,7 @@ function PopoverApp() {
             <>
               <section>
                 <SectionLabel>Scenes</SectionLabel>
-                <div className="grid grid-cols-3 gap-[10px]">
+                <div className="grid w-full min-w-0 grid-cols-3 gap-[10px]">
                   {manifest.scenes.map((scene) => (
                     <SceneTile
                       key={scene.id}
