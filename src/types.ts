@@ -3,8 +3,6 @@ export const MASTER_ID = 'master';
 
 export type AppMode = 'stopped' | 'video' | 'audioOnly';
 
-export type TimerMinutes = 15 | 30 | 60 | 90;
-
 export interface SceneManifest {
   id: string;
   name: string;
@@ -49,11 +47,6 @@ export interface Settings {
   videoDimmer: number;
 }
 
-export interface TimerState {
-  minutes: TimerMinutes;
-  endsAt: number;
-}
-
 export interface AppStateSnapshot {
   mode: AppMode;
   paused: boolean;
@@ -64,7 +57,6 @@ export interface AppStateSnapshot {
   defaultPresetId: string | null;
   lastSession: LastSession | null;
   settings: Settings;
-  timer: TimerState | null;
   fadeOutMs: number | null;
 }
 
@@ -108,7 +100,6 @@ export interface CampfireApi {
   openPresetsFile: () => Promise<void>;
   pausePlayer: () => Promise<AppStateSnapshot>;
   resumePlayer: () => Promise<AppStateSnapshot>;
-  setTimer: (payload: { minutes: TimerMinutes | null }) => Promise<AppStateSnapshot>;
   setSetting: (payload: { key: keyof Settings; value: boolean | number }) => Promise<AppStateSnapshot>;
   onStateChanged: (callback: (state: AppStateSnapshot) => void) => () => void;
   onAudioApply: (callback: (payload: { mix: Mix }) => void) => () => void;

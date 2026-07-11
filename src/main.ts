@@ -32,8 +32,6 @@ import {
   type Settings,
   type SoundIconName,
   type SoundManifest,
-  type TimerMinutes,
-  type TimerState,
 } from './types';
 
 protocol.registerSchemesAsPrivileged([
@@ -58,8 +56,6 @@ const DEFAULT_SETTINGS: Settings = {
 const POPOVER_WIDTH = 380;
 const POPOVER_HEIGHT = 660;
 const STOP_FADE_MS = 400;
-const TIMER_FADE_MS = 10_000;
-const TIMER_OPTIONS: TimerMinutes[] = [15, 30, 60, 90];
 
 let tray: Tray | null = null;
 let popoverWindow: BrowserWindow | null = null;
@@ -81,8 +77,6 @@ let currentSceneId: string | null = null;
 let currentMix: Mix = { [MASTER_ID]: 1, [SCENE_SOUND_ID]: 0.7 };
 let lastSession: LastSession | null = null;
 let settings: Settings = { ...DEFAULT_SETTINGS };
-let sleepTimer: TimerState | null = null;
-let sleepTimerHandle: ReturnType<typeof setTimeout> | null = null;
 let presetsWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let stateWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let cachedMediaRoot: string | null = null;
@@ -465,7 +459,6 @@ function snapshot(fadeOutMs: number | null = null): AppStateSnapshot {
     defaultPresetId: getDefaultPreset()?.id ?? null,
     lastSession: lastSession ? { ...lastSession, mix: { ...lastSession.mix } } : null,
     settings: { ...settings },
-    timer: sleepTimer ? { ...sleepTimer } : null,
     fadeOutMs,
   };
 }
@@ -495,26 +488,6 @@ function sendVideoSwitch(scene: SceneManifest) {
   if (sessionWindow && !sessionWindow.isDestroyed()) {
     sessionWindow.webContents.send('video:switch', { videoUrl: scene.videoUrl, posterUrl: scene.posterUrl });
   }
-}
-
-function clearSleepTimer() {
-  if (sleepTimerHandle) {
-    clearTimeout(sleepTimerHandle);
-    sleepTimerHandle = null;
-  }
-  sleepTimer = null;
-}
-
-function setSleepTimer(minutes: TimerMinutes | null) {
-  clearSleepTimer();
-  if (minutes) {
-    const endsAt = Date.now() + minutes * 60_000;
-    sleepTimer = { minutes, endsAt };
-    sleepTimerHandle = setTimeout(() => {
-      void stopPlayback(TIMER_FADE_MS);
-    }, minutes * 60_000);
-  }
-  return broadcastState();
 }
 
 function loadTrayImage(active: boolean) {
@@ -682,14 +655,10 @@ function positionPopover(window: BrowserWindow) {
   window.setBounds({ x, y, width: POPOVER_WIDTH, height: POPOVER_HEIGHT });
 }
 
-async function togglePopover() {
+async function showPopover() {
   scanManifest();
   const window = createPopoverWindow();
   positionPopover(window);
-  if (window.isVisible()) {
-    window.hide();
-    return;
-  }
   await waitForWebContentsLoad(window);
   if (window.isDestroyed()) {
     return;
@@ -698,6 +667,16 @@ async function togglePopover() {
   window.show();
   window.focus();
   broadcastState();
+}
+
+async function togglePopover() {
+  const window = createPopoverWindow();
+  positionPopover(window);
+  if (window.isVisible()) {
+    window.hide();
+    return;
+  }
+  await showPopover();
 }
 
 async function ensureAudioWindow() {
@@ -767,6 +746,11 @@ function createSessionWindow() {
       sessionReady = null;
     }
     stopPowerSaveBlocker();
+  });
+  window.on('leave-full-screen', () => {
+    if (!isQuitting) {
+      void showPopover();
+    }
   });
   sessionReady = rendererRoute(window, '/session')
     .then((): void => undefined)
@@ -905,7 +889,6 @@ async function startVideoSession(sceneId: string, mix: Mix) {
   if (!scene) {
     throw new Error(`Unknown scene: ${sceneId}`);
   }
-  clearSleepTimer();
   playbackGeneration += 1;
   mode = 'video';
   paused = false;
@@ -919,7 +902,6 @@ async function startVideoSession(sceneId: string, mix: Mix) {
 }
 
 async function startAudioOnly(mix: Mix, sceneId = currentSceneId) {
-  clearSleepTimer();
   const generation = ++playbackGeneration;
   currentSceneId = getScene(sceneId)?.id ?? currentSceneId;
   currentMix = normalizeMix(mix);
@@ -934,7 +916,6 @@ async function startAudioOnly(mix: Mix, sceneId = currentSceneId) {
 
 async function stopPlayback(fadeMs = STOP_FADE_MS) {
   if (mode === 'stopped') {
-    clearSleepTimer();
     return broadcastState();
   }
 
@@ -943,7 +924,6 @@ async function stopPlayback(fadeMs = STOP_FADE_MS) {
   if (currentSceneId) {
     lastSession = { sceneId: currentSceneId, mix: { ...currentMix }, mode: stoppedMode };
   }
-  clearSleepTimer();
   paused = false;
   mode = 'stopped';
   scheduleStateWrite();
@@ -954,6 +934,9 @@ async function stopPlayback(fadeMs = STOP_FADE_MS) {
   sendVideoVolume();
   const state = broadcastState(fadeMs);
   destroySessionWindowAfter(fadeMs, generation);
+  if (!isQuitting) {
+    void showPopover();
+  }
   return state;
 }
 
@@ -1110,10 +1093,6 @@ function registerIpcHandlers() {
   });
   ipcMain.handle('player:pause', () => pausePlayer());
   ipcMain.handle('player:resume', () => resumePlayer());
-  ipcMain.handle('timer:set', (_event, payload: { minutes: TimerMinutes | null }) => {
-    const minutes = payload.minutes && TIMER_OPTIONS.includes(payload.minutes) ? payload.minutes : null;
-    return setSleepTimer(minutes);
-  });
   ipcMain.handle('settings:set', (_event, payload: { key: keyof Settings; value: boolean | number }) =>
     handleSettingsSet(payload.key, payload.value),
   );

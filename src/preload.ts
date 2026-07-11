@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppStateSnapshot, CampfireApi, MediaManifest, Mix, Preset, Settings, TimerMinutes } from './types';
+import type { AppStateSnapshot, CampfireApi, MediaManifest, Mix, Preset, Settings } from './types';
 
 function onChannel<T>(channel: string, callback: (payload: T) => void) {
   const listener = (_event: Electron.IpcRendererEvent, payload: T) => callback(payload);
@@ -31,8 +31,6 @@ const api: CampfireApi = {
   openPresetsFile: () => ipcRenderer.invoke('presets:openFile') as Promise<void>,
   pausePlayer: () => ipcRenderer.invoke('player:pause') as Promise<AppStateSnapshot>,
   resumePlayer: () => ipcRenderer.invoke('player:resume') as Promise<AppStateSnapshot>,
-  setTimer: (payload: { minutes: TimerMinutes | null }) =>
-    ipcRenderer.invoke('timer:set', payload) as Promise<AppStateSnapshot>,
   setSetting: (payload: { key: keyof Settings; value: boolean | number }) =>
     ipcRenderer.invoke('settings:set', payload) as Promise<AppStateSnapshot>,
   onStateChanged: (callback: (state: AppStateSnapshot) => void) => onChannel('state:changed', callback),

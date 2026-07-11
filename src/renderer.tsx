@@ -7,7 +7,6 @@ import {
   ChevronDownIcon,
   ClockIcon,
   FlameIcon,
-  MoonIcon,
   PauseIcon,
   PlayIcon,
   SettingsIcon,
@@ -25,10 +24,8 @@ import {
   type SceneManifest,
   type Settings,
   type SoundManifest,
-  type TimerMinutes,
 } from './types';
 
-const TIMER_CYCLE: Array<TimerMinutes | null> = [null, 15, 30, 60, 90];
 const DEFAULT_MIX: Mix = { [MASTER_ID]: 1, [SCENE_SOUND_ID]: 0.7 };
 
 function clamp01(value: number, fallback = 0) {
@@ -40,11 +37,6 @@ function mixValue(mix: Mix, channelId: string) {
     return clamp01(mix[channelId] ?? 1, 1);
   }
   return clamp01(mix[channelId] ?? 0, 0);
-}
-
-function nextTimer(current: TimerMinutes | null) {
-  const index = TIMER_CYCLE.indexOf(current);
-  return TIMER_CYCLE[(index + 1) % TIMER_CYCLE.length];
 }
 
 function useCampfireData() {
@@ -129,24 +121,6 @@ function IconButton({
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-stone-500">{children}</div>;
-}
-
-function TimerButton({ state }: { state: AppStateSnapshot }) {
-  const minutes = state.timer?.minutes ?? null;
-  const label = state.timer ? `${Math.max(1, Math.ceil((state.timer.endsAt - Date.now()) / 60_000))}` : null;
-  return (
-    <button
-      className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 active:scale-[0.98] ${
-        minutes ? 'bg-amber-400/15 text-amber-300' : 'text-stone-400 hover:bg-white/10 hover:text-stone-100'
-      }`}
-      title="Sleep timer"
-      type="button"
-      onClick={() => void window.campfire.setTimer({ minutes: nextTimer(minutes) })}
-    >
-      <MoonIcon size={15} />
-      {label && <span className="absolute -right-1 -top-1 text-[9px] font-semibold text-amber-300">{label}</span>}
-    </button>
-  );
 }
 
 function SceneTile({
@@ -452,7 +426,6 @@ function PopoverApp() {
             <div className="text-[15px] font-medium text-stone-50">Campfire</div>
           </div>
           <div className="flex items-center gap-1">
-            <TimerButton state={state} />
             <IconButton
               className={settingsOpen ? 'bg-amber-400/15 text-amber-300' : ''}
               title="Settings"
@@ -463,7 +436,7 @@ function PopoverApp() {
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-4 pr-1">
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-4 px-1">
           {settingsOpen ? (
             <SettingsPanel
               settings={state.settings}
@@ -1031,7 +1004,6 @@ function SessionView() {
         >
           {state.paused ? <PlayIcon size={14} /> : <PauseIcon size={14} />}
         </IconButton>
-        <TimerButton state={state} />
         <div className="flex w-28 items-center">
           <Slider
             title="Video dimmer"
