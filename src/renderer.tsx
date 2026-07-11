@@ -815,7 +815,7 @@ function SessionView() {
   const videoUrlRef = useRef<string | null>(null);
   const [videoVisible, setVideoVisible] = useState(false);
   const [fadeDuration, setFadeDuration] = useState(600);
-  const [overlayVisible, setOverlayVisible] = useState(true);
+  const [overlayVisible, setOverlayVisible] = useState(false);
   const [cursorHidden, setCursorHidden] = useState(false);
   const [clock, setClock] = useState(() => new Date());
 
@@ -936,7 +936,6 @@ function SessionView() {
   }, []);
 
   useEffect(() => {
-    showOverlay();
     return () => {
       if (hideTimer.current) {
         window.clearTimeout(hideTimer.current);
@@ -945,7 +944,7 @@ function SessionView() {
         window.cancelAnimationFrame(volumeFrame.current);
       }
     };
-  }, [showOverlay]);
+  }, []);
 
   if (!state) {
     return <div className="h-screen w-screen bg-black" />;
@@ -956,7 +955,7 @@ function SessionView() {
   return (
     <main
       className={`relative h-screen w-screen overflow-hidden bg-black text-stone-50 ${cursorHidden ? 'cursor-none' : ''}`}
-      onMouseMove={showOverlay}
+      onPointerMove={showOverlay}
     >
       {posterUrl && (
         <img
@@ -993,7 +992,7 @@ function SessionView() {
 
       <div
         className={`absolute bottom-8 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-stone-900/70 px-4 py-2 text-stone-200 shadow-2xl backdrop-blur transition-all duration-200 ${
-          overlayVisible ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'
+          overlayVisible ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-3 opacity-0'
         }`}
       >
         <div className="max-w-[180px] truncate text-[12px] text-stone-300">{scene?.name ?? 'Campfire'}</div>
